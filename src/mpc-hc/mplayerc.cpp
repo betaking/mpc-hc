@@ -260,6 +260,40 @@ WORD AssignedToCmd(UINT keyOrMouseValue, bool bIsFullScreen, bool bCheckMouse)
     return assignTo;
 }
 
+LONG RegRenameValue(HKEY hKey, LPCTSTR lpSubKeyName, LPCTSTR lpNewKeyName)
+{
+    LONG errorCode;
+    
+    // Query the buffer size
+    ULONG len = 0;
+    errorCode = RegQueryValueEx(hKey, lpSubKeyName, 0, nullptr, nullptr, &len);
+    if (errorCode != ERROR_SUCCESS) {
+        return errorCode;
+    }
+
+    // Allocate the buffer and query the data
+    BYTE* buff = DEBUG_NEW BYTE[len];
+    DWORD type;
+    errorCode = RegQueryValueEx(hKey, lpSubKeyName, 0, &type, buff, &len);
+    if (errorCode != ERROR_SUCCESS) {
+        delete [] buff;
+        return errorCode;
+    }
+
+    // Delete the old data
+    errorCode = RegDeleteValue(hKey, lpSubKeyName);
+    if (errorCode != ERROR_SUCCESS) {
+        delete [] buff;
+        return errorCode;
+    }
+
+    // Set the data at the new location
+    errorCode = RegSetValueEx(hKey, lpNewKeyName, 0, type, buff, len);
+    
+    delete [] buff;
+    return errorCode;
+}
+
 /////////////////////////////////////////////////////////////////////////////
 // CMPlayerCApp
 
@@ -1347,6 +1381,40 @@ BOOL CMPlayerCApp::InitInstance()
         }
     }
 
+    if (!IsIniValid()) {
+        LSTATUS errorCode;
+        CRegKey key;
+        if (ERROR_SUCCESS == key.Create(HKEY_CURRENT_USER, _T("Software\\MPC-HC\\MPC-HC")) ) {
+            ULONG len;
+            if (RegQueryValue(key.m_hKey, _T("ExePath"), nullptr, nullptr) != ERROR_SUCCESS) { // First launch
+                // Migrate registry settings from old to new location
+                CRegKey oldKey;
+                if (ERROR_SUCCESS == oldKey.Open(HKEY_CURRENT_USER, _T("Software\\Gabest\\Media Player Classic"), KEY_READ)) {
+                    SHCopyKey(oldKey.m_hKey, _T(""), key.m_hKey, 0);
+
+                    // Rename the setting values to match the new format
+                    CRegKey settingsKey;
+                    if (ERROR_SUCCESS == settingsKey.Open(key, _T("Settings"))) {
+                        RegRenameValue(settingsKey.m_hKey, _T("Remember DVD Pos"), _T("RememberDVDPos"));
+                        RegRenameValue(settingsKey.m_hKey, _T("Remember File Pos"), _T("RememberFilePos"));
+                        RegRenameValue(settingsKey.m_hKey, _T("Show OSD"), _T("ShowOSD"));
+                        RegRenameValue(settingsKey.m_hKey, _T("Shaders List"), _T("ShadersList"));
+                        RegRenameValue(settingsKey.m_hKey, _T("SnapShotPath"), _T("SnapshotPath"));
+                        RegRenameValue(settingsKey.m_hKey, _T("SnapShotExt"), _T("SnapshotExt"));
+                        RegRenameValue(settingsKey.m_hKey, _T("OSD_Size"), _T("OSDSize"));
+                        RegRenameValue(settingsKey.m_hKey, _T("OSD_Font"), _T("OSDFont"));
+                        RegRenameValue(settingsKey.m_hKey, _T("DVB configuration"), _T("DVBConfiguration"));
+                        RegRenameValue(settingsKey.m_hKey, _T("gotoluf"), _T("GoToLastUsed"));
+                        RegRenameValue(settingsKey.m_hKey, _T("fps"), _T("GoToFPS"));
+                    }
+                }
+            }
+        
+            CString exePath = GetProgramPath(true);
+            key.SetStringValue(_T("ExePath"), exePath);
+        }
+    }
+
     m_s.LoadSettings(); // read settings
 
     m_AudioRendererDisplayName_CL = _T("");
@@ -1354,14 +1422,6 @@ BOOL CMPlayerCApp::InitInstance()
     if (!__super::InitInstance()) {
         AfxMessageBox(_T("InitInstance failed!"));
         return FALSE;
-    }
-
-    if (!IsIniValid()) {
-        CRegKey key;
-        CString exePath = GetProgramPath(true);
-        if (ERROR_SUCCESS == key.Create(HKEY_CURRENT_USER, _T("Software\\MPC-HC\\MPC-HC"))) {
-            key.SetStringValue(_T("ExePath"), exePath);
-        }
     }
 
     AfxEnableControlContainer();
